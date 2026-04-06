@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overlap Skin Master</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --miku-green: #39C5BB;
+            --bg-dark: #050505;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Kanit', sans-serif;
+            background: #000;
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Menu UI */
+        .controls {
+            position: sticky;
+            top: 10px;
+            z-index: 1000;
+            background: rgba(20, 20, 20, 0.95);
+            backdrop-filter: blur(15px);
+            border: 1px solid #333;
+            border-radius: 20px;
+            padding: 15px 25px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+        }
+
+        .input-group { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 0.75rem; color: var(--miku-green); font-weight: bold; }
+
+        input[type="number"], input[type="range"] {
+            background: #111;
+            border: 1px solid var(--miku-green);
+            color: white;
+            padding: 5px;
+            border-radius: 8px;
+        }
+
+        .btn {
+            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            padding: 10px 20px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+
+        .btn-upload { background: var(--miku-green); color: #000; }
+        .btn-export { background: #fff; color: #000; }
+
+        /* --- THE OVERLAP ENGINE --- */
+        #collage-container {
+            display: grid;
+            /* เราจะใช้ค่าตัวแปรเพื่อคุมการซ้อนทับ */
+            grid-column-gap: var(--overlap-x, -5px); 
+            grid-row-gap: var(--overlap-y, -10px);
+            background: transparent;
+            padding: 40px; /* เผื่อที่ให้ป้ายแท็กที่ล้นออกมา */
+            width: fit-content;
+            justify-content: center;
+        }
+
+        .skin-item {
+            position: relative;
+            cursor: move;
+            transition: transform 0.1s;
+            /* ห้ามใช้ overflow: hidden เพื่อให้ป้ายแท็กที่ล้นออกมาไปซ้อนภาพอื่นได้ */
+            overflow: visible; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .skin-item img {
+            width: 140px; /* ขนาดมาตรฐานของการ์ดสกิน */
+            height: auto;
+            display: block;
+            filter: drop-shadow(0 0 5px rgba(0,0,0,0.5)); /* เพิ่มมิติเวลาซ้อนกัน */
+        }
+
+        /* ปุ่มลบ */
+        .remove-btn {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            cursor: pointer;
+            z-index: 100;
+            display: none;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .skin-item:hover .remove-btn { display: block; }
+        .skin-item:hover { z-index: 50; transform: scale(1.05); }
+
+        #loading {
+            position: fixed;
+            top: 20px;
+            background: var(--miku-green);
+            color: black;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-weight: bold;
+            display: none;
+            z-index: 2000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">กำลังเตรียมรูปภาพ...</div>
+
+    <div class="controls">
+        <div class="input-group">
+            <label>รูปต่อแถว</label>
+            <input type="number" id="col-count" value="8" min="1" style="width: 60px; text-align: center;">
+        </div>
+
+        <div class="input-group">
+            <label>ความชิด (ซ้าย-ขวา)</label>
+            <input type="range" id="overlap-x" min="-50" max="10" value="-15">
+        </div>
+
+        <div class="input-group">
+            <label>ความชิด (บน-ล่าง)</label>
+            <input type="range" id="overlap-y" min="-50" max="10" value="-25">
+        </div>
+        
+        <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+        <button class="btn btn-upload" onclick="document.getElementById('file-input').click()">+ เพิ่มสกิน</button>
+        <button class="btn btn-export" onclick="exportImage()">💾 เซฟภาพขายของ</button>
+    </div>
+
+    <div id="collage-container"></div>
+
+    <script>
+        const container = document.getElementById('collage-container');
+        const colInput = document.getElementById('col-count');
+        const overlapX = document.getElementById('overlap-x');
+        const overlapY = document.getElementById('overlap-y');
+        const loading = document.getElementById('loading');
+
+        function updateLayout() {
+            container.style.gridTemplateColumns = `repeat(${colInput.value}, auto)`;
+            container.style.setProperty('--overlap-x', overlapX.value + 'px');
+            container.style.setProperty('--overlap-y', overlapY.value + 'px');
+        }
+
+        [colInput, overlapX, overlapY].forEach(input => input.addEventListener('input', updateLayout));
+
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+            loading.style.display = 'block';
+
+            files.forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const div = document.createElement('div');
+                    div.className = 'skin-item';
+                    div.innerHTML = `<button class="remove-btn" onclick="this.parentElement.remove();">✕</button><img src="${event.target.result}">`;
+                    container.appendChild(div);
+                    if (index === files.length - 1) {
+                        loading.style.display = 'none';
+                        updateLayout();
+                    }
+                };
+                reader.readAsDataURL(file);
+            });
+        });
+
+        new Sortable(container, { animation: 150 });
+
+        async function exportImage() {
+            if (container.children.length === 0) return;
+            loading.style.display = 'block';
+            const removes = document.querySelectorAll('.remove-btn');
+            removes.forEach(b => b.style.display = 'none');
+
+            try {
+                // ใช้ html2canvas พร้อมตั้งค่าเผื่อส่วนที่ล้นออกมา (Overflow)
+                const canvas = await html2canvas(container, {
+                    scale: 2,
+                    backgroundColor: null, // เซฟเป็นพื้นหลังโปร่งใสไปเลย เริ่ดๆ
+                    useCORS: true,
+                    x: container.scrollLeft,
+                    y: container.scrollTop,
+                    width: container.offsetWidth,
+                    height: container.offsetHeight
+                });
+                const link = document.createElement('a');
+                link.download = `Skins-Overlap-${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            } catch (err) {
+                console.error(err);
+            } finally {
+                removes.forEach(b => b.style.display = '');
+                loading.style.display = 'none';
+            }
+        }
+        
+        updateLayout();
+    </script>
+</body>
+</html>
